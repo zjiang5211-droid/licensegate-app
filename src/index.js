@@ -51,6 +51,21 @@ app.post(
 
     const event = req.headers["x-github-event"];
     if (event === "ping") return res.json({ ok: true, pong: true });
+    if (event === "marketplace_purchase") {
+      // Paid-plan lifecycle: purchased / changed / cancelled. Handled by
+      // billing.js; never throws (malformed payloads are ignored, not 500s).
+      try {
+        const result = await billing.handleMarketplacePurchase(payload);
+        return res.json(
+          Object.assign({ ok: true, handled: "marketplace_purchase" }, result)
+        );
+      } catch (err) {
+        console.error("[webhook] marketplace_purchase handling failed:", err);
+        return res
+          .status(500)
+          .json({ ok: false, error: (err && err.message) || String(err) });
+      }
+    }
     if (
       event !== "pull_request" ||
       !["opened", "synchronize", "reopened"].includes(payload.action)
@@ -159,10 +174,13 @@ async function handlePullRequest(payload) {
     const evaluation = policy.evaluateDependencies(changes, policyCfg);
 
     // Billing gate: free plan covers 1 repo per installation.
+    // NOTE: the Marketplace account id is the org/user id (repository owner),
+    // not the app installation id — the plan lookup keys on the account.
+    const accountId = (repoFull.owner && repoFull.owner.id) || installationId;
     const alreadyTracked = store.hasRepo(installationId, repo);
     const repoCount =
       store.countDistinctRepos(installationId) + (alreadyTracked ? 0 : 1);
-    const plan = await billing.getPlan(installationId, repoCount);
+    const plan = await billing.getPlan(accountId, repoCount);
 
     let summary, text, conclusion;
     if (repoCount > plan.repoLimit) {

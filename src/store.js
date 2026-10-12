@@ -42,6 +42,12 @@ function getDb() {
     CREATE INDEX IF NOT EXISTS idx_scans_org ON scans(org);
     CREATE INDEX IF NOT EXISTS idx_scans_installation ON scans(installation_id);
     CREATE INDEX IF NOT EXISTS idx_violations_scan ON violations(scan_id);
+    CREATE TABLE IF NOT EXISTS account_plans (
+      account_id INTEGER PRIMARY KEY,
+      plan TEXT NOT NULL,
+      source TEXT,
+      updated_at TEXT NOT NULL
+    );
   `);
   return db;
 }
@@ -162,6 +168,32 @@ function close() {
   }
 }
 
+/**
+ * Persist the plan for a GitHub Marketplace account (org/user id), as
+ * reported by a marketplace_purchase webhook event. Normalized plan:
+ * "free" | "pro" | "team".
+ */
+function setAccountPlan(accountId, plan, source) {
+  getDb()
+    .prepare(
+      `INSERT INTO account_plans (account_id, plan, source, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(account_id) DO UPDATE SET
+         plan = excluded.plan,
+         source = excluded.source,
+         updated_at = excluded.updated_at`
+    )
+    .run(accountId, plan, source || null, new Date().toISOString());
+}
+
+/** Plan recorded for a Marketplace account id, or null if none. */
+function getAccountPlan(accountId) {
+  const row = getDb()
+    .prepare("SELECT plan, source, updated_at FROM account_plans WHERE account_id = ?")
+    .get(accountId);
+  return row || null;
+}
+
 module.exports = {
   getDb,
   recordScan,
@@ -171,5 +203,7 @@ module.exports = {
   countDistinctRepos,
   hasRepo,
   getTopLicenses,
+  setAccountPlan,
+  getAccountPlan,
   close,
 };
